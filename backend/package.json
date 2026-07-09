@@ -1,0 +1,48 @@
+{
+  "name": "@dx-agents/backend",
+  "version": "2.0.0",
+  "description": "DX-Agents Backend - Multi-model AI orchestration engine",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate": "tsx src/database/migrations/run.ts",
+    "seed": "tsx src/database/seeds/run.ts",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.26.0",
+    "@google/generative-ai": "^0.21.0",
+    "@qdrant/js-client-rest": "^1.9.0",
+    "axios": "^1.7.0",
+    "bull": "^4.12.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0",
+    "groq-sdk": "^0.8.0",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.0",
+    "jsonwebtoken": "^9.0.0",
+    "openai": "^4.52.0",
+    "pg": "^8.12.0",
+    "pino": "^9.1.0",
+    "prom-client": "^15.1.0",
+    "socket.io": "^4.7.0",
+    "uuid": "^10.0.0",
+    "winston": "^3.13.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bull": "^4.10.0",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  }
+}
