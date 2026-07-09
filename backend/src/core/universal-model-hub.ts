@@ -3,6 +3,8 @@ import { config } from '../config/index';
 import { CONSTANTS } from '../config/constants';
 import { eventBus } from './event-bus';
 import type { ModelProvider, ModelReference, INeuralBridge, ConnectionType } from '../types/common.types';
+import { piiAnonymizer } from '../security/pii-anonymizer';
+import { ethicalGuardrails } from '../security/ethical-guardrails';
 import type { ModelConfig, ModelRequest, ModelResponse, ModelMetrics } from '../types/model.types';
 
 export class UniversalModelHub {
@@ -152,34 +154,44 @@ export class UniversalModelHub {
     }
     
     const startTime = Date.now();
+
+    // 1. Appliquer les guardrails éthiques au prompt
+    const promptEvaluation = await ethicalGuardrails.evaluatePrompt(prompt);
+    if (!promptEvaluation.passed) {
+      throw new Error(`Ethical guardrail violation: ${promptEvaluation.reason}`);
+    }
+
+    // 2. Anonymiser les PII dans le prompt
+    const anonymizedPrompt = piiAnonymizer.anonymize(prompt);
     
     try {
       let response: ModelResponse;
+      const processedPrompt = anonymizedPrompt; // Use the anonymized prompt
       
       switch (modelRef.provider) {
         case 'anthropic':
-          response = await this.anthropicRequest(providerConfig, prompt, options);
+          response = await this.anthropicRequest(providerConfig, processedPrompt, options);
           break;
         case 'openai':
-          response = await this.openaiRequest(providerConfig, prompt, options);
+          response = await this.openaiRequest(providerConfig, processedPrompt, options);
           break;
         case 'google':
-          response = await this.googleRequest(providerConfig, prompt, options);
+          response = await this.googleRequest(providerConfig, processedPrompt, options);
           break;
         case 'grok':
-          response = await this.grokRequest(providerConfig, prompt, options);
+          response = await this.grokRequest(providerConfig, processedPrompt, options);
           break;
         case 'deepseek':
-          response = await this.deepseekRequest(providerConfig, prompt, options);
+          response = await this.deepseekRequest(providerConfig, processedPrompt, options);
           break;
         case 'groq':
-          response = await this.groqRequest(providerConfig, prompt, options);
+          response = await this.groqRequest(providerConfig, processedPrompt, options);
           break;
         case 'nvidia':
-          response = await this.nvidiaRequest(providerConfig, prompt, options);
+          response = await this.nvidiaRequest(providerConfig, processedPrompt, options);
           break;
         default:
-          response = await this.localRequest(providerConfig, prompt, options);
+          response = await this.localRequest(providerConfig, processedPrompt, options);
       }
       
       const latency = Date.now() - startTime;
@@ -187,6 +199,15 @@ export class UniversalModelHub {
       
       this.updateMetrics(key, latency, true);
       
+      // 3. Appliquer les guardrails éthiques à la réponse
+      const responseEvaluation = await ethicalGuardrails.evaluateResponse(response.response);
+      if (!responseEvaluation.passed) {
+        throw new Error(`Ethical guardrail violation in response: ${responseEvaluation.reason}`);
+      }
+
+      // 4. Anonymiser les PII dans la réponse avant de la retourner
+      response.response = piiAnonymizer.anonymize(response.response);
+
       return response;
     } catch (error: any) {
       this.updateMetrics(key, Date.now() - startTime, false);

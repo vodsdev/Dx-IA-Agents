@@ -40,7 +40,10 @@ const envSchema = z.object({
   
   JWT_SECRET: z.string().default('dev-secret-change-in-production'),
   JWT_EXPIRATION: z.string().default('24h'),
-  ENCRYPTION_KEY: z.string().default('0123456789abcdef0123456789abcdef'),
+  ENCRYPTION_KEY: z.string().default("0123456789abcdef0123456789abcdef"),
+  ENABLE_PII_ANONYMIZATION: z.boolean().default(false),
+  CUSTOM_PII_PATTERNS: z.string().optional(),
+  CUSTOM_ETHICAL_RULES: z.string().optional(),
   
   MAX_AGENTS: z.string().default('2000'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('debug'),
@@ -99,6 +102,9 @@ export const config = {
     jwtSecret: parsed.data.JWT_SECRET,
     jwtExpiration: parsed.data.JWT_EXPIRATION,
     encryptionKey: parsed.data.ENCRYPTION_KEY,
+    enablePiiAnonymization: parsed.data.ENABLE_PII_ANONYMIZATION,
+    customPiiPatterns: parsed.data.CUSTOM_PII_PATTERNS ? JSON.parse(parsed.data.CUSTOM_PII_PATTERNS) : undefined,
+    customEthicalRules: parsed.data.CUSTOM_ETHICAL_RULES ? JSON.parse(parsed.data.CUSTOM_ETHICAL_RULES) : undefined,
   },
   agents: {
     maxAgents: parseInt(parsed.data.MAX_AGENTS),
