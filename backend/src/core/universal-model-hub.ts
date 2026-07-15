@@ -146,6 +146,9 @@ export class UniversalModelHub {
   }
   
   async request(modelRef: ModelReference, prompt: string, options: any = {}): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamRequest(modelRef, prompt, options);
+    }
     const key = `${modelRef.provider}:${modelRef.model}`;
     const providerConfig = this.modelRegistry.get(key);
     
@@ -216,6 +219,9 @@ export class UniversalModelHub {
   }
   
   private async anthropicRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamAnthropicRequest(config, prompt, options);
+    }
     const response = await axios.post(
       config.endpoint!,
       {
@@ -241,6 +247,9 @@ export class UniversalModelHub {
   }
   
   private async openaiRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamOpenAIRequest(config, prompt, options);
+    }
     const response = await axios.post(
       config.endpoint!,
       {
@@ -266,6 +275,9 @@ export class UniversalModelHub {
   }
   
   private async googleRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamGoogleRequest(config, prompt, options);
+    }
     const response = await axios.post(
       `${config.endpoint}/${config.model}:generateContent?key=${config.apiKey}`,
       {
@@ -285,6 +297,9 @@ export class UniversalModelHub {
   }
   
   private async grokRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamGrokRequest(config, prompt, options);
+    }
     const response = await axios.post(
       config.endpoint!,
       {
@@ -307,6 +322,9 @@ export class UniversalModelHub {
   }
   
   private async deepseekRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamDeepseekRequest(config, prompt, options);
+    }
     const response = await axios.post(
       config.endpoint!,
       {
@@ -329,6 +347,9 @@ export class UniversalModelHub {
   }
   
   private async groqRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamGroqRequest(config, prompt, options);
+    }
     const response = await axios.post(
       config.endpoint!,
       {
@@ -354,6 +375,9 @@ export class UniversalModelHub {
   }
   
   private async nvidiaRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamNvidiaRequest(config, prompt, options);
+    }
     const response = await axios.post(
       config.endpoint!,
       {
@@ -377,6 +401,9 @@ export class UniversalModelHub {
   }
   
   private async localRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    if (options.stream) {
+      return this.streamLocalRequest(config, prompt, options);
+    }
     const response = await axios.post(`${config.endpoint}/generate`, {
       model: config.model,
       prompt,
@@ -471,6 +498,610 @@ export class UniversalModelHub {
     }
   }
   
+  async streamRequest(modelRef: ModelReference, prompt: string, options: any = {}): Promise<ModelResponse> {
+    const key = `${modelRef.provider}:${modelRef.model}`;
+    const providerConfig = this.modelRegistry.get(key);
+
+    if (!providerConfig) {
+      throw new Error(`Provider not found for streaming: ${key}`);
+    }
+
+    const startTime = Date.now();
+
+    // 1. Appliquer les guardrails éthiques au prompt
+    const promptEvaluation = await ethicalGuardrails.evaluatePrompt(prompt);
+    if (!promptEvaluation.passed) {
+      throw new Error(`Ethical guardrail violation: ${promptEvaluation.reason}`);
+    }
+
+    // 2. Anonymiser les PII dans le prompt
+    const anonymizedPrompt = piiAnonymizer.anonymize(prompt);
+
+    try {
+      let response: ModelResponse;
+      const processedPrompt = anonymizedPrompt; // Use the anonymized prompt
+
+      switch (modelRef.provider) {
+        case 'anthropic':
+          response = await this.streamAnthropicRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'openai':
+          response = await this.streamOpenAIRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'google':
+          response = await this.streamGoogleRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'grok':
+          response = await this.streamGrokRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'deepseek':
+          response = await this.streamDeepseekRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'groq':
+          response = await this.streamGroqRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'nvidia':
+          response = await this.streamNvidiaRequest(providerConfig, processedPrompt, options);
+          break;
+        default:
+          response = await this.streamLocalRequest(providerConfig, processedPrompt, options);
+      }
+
+      const latency = Date.now() - startTime;
+      response.latency = latency;
+
+      this.updateMetrics(key, latency, true);
+
+      // 3. Appliquer les guardrails éthiques à la réponse (si la réponse est complète)
+      if (typeof response.response === 'string') {
+        const responseEvaluation = await ethicalGuardrails.evaluateResponse(response.response);
+        if (!responseEvaluation.passed) {
+          throw new Error(`Ethical guardrail violation in response: ${responseEvaluation.reason}`);
+        }
+
+        // 4. Anonymiser les PII dans la réponse avant de la retourner
+        response.response = piiAnonymizer.anonymize(response.response);
+      }
+
+      return response;
+    } catch (error: any) {
+      this.updateMetrics(key, Date.now() - startTime, false);
+      throw error;
+    }
+  }
+
+  private async streamAnthropicRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      config.endpoint!,
+      {
+        model: config.model,
+        max_tokens: options.maxTokens || 4096,
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+      },
+      {
+        headers: {
+          'x-api-key': config.apiKey,
+          'anthropic-version': '2024-02-15',
+          'content-type': 'application/json',
+        },
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          const message = line.replace(/^data: /, '');
+          if (message === '[DONE]') {
+            return;
+          }
+          try {
+            const parsed = JSON.parse(message);
+            const content = parsed.delta.text;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing Anthropic stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: 'anthropic',
+          // Usage will need to be calculated or estimated after the full response is received
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Anthropic stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  private async streamOpenAIRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      config.endpoint!,
+      {
+        model: config.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options.temperature || 0.7,
+        max_tokens: options.maxTokens || 4096,
+        stream: true,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          const message = line.replace(/^data: /, '');
+          if (message === '[DONE]') {
+            return;
+          }
+          try {
+            const parsed = JSON.parse(message);
+            const content = parsed.choices[0].delta.content;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: 'openai',
+          // Usage will need to be calculated or estimated after the full response is received
+          // For now, leaving it undefined or a placeholder
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`OpenAI stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  private async streamGoogleRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      `${config.endpoint}/${config.model}:streamGenerateContent?key=${config.apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: options.temperature || 0.7,
+          maxOutputTokens: options.maxTokens || 4096,
+        },
+      },
+      {
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            const content = parsed.candidates[0].content.parts[0].text;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing Google stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: 'google',
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Google stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  private async streamGrokRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      config.endpoint!,
+      {
+        model: config.model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          const message = line.replace(/^data: /, '');
+          if (message === '[DONE]') {
+            return;
+          }
+          try {
+            const parsed = JSON.parse(message);
+            const content = parsed.choices[0].delta.content;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing Grok stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: 'grok',
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Grok stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  private async streamDeepseekRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      config.endpoint!,
+      {
+        model: config.model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          const message = line.replace(/^data: /, '');
+          if (message === '[DONE]') {
+            return;
+          }
+          try {
+            const parsed = JSON.parse(message);
+            const content = parsed.choices[0].delta.content;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing Deepseek stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: 'deepseek',
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Deepseek stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  private async streamGroqRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      config.endpoint!,
+      {
+        model: config.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options.temperature || 0.7,
+        max_tokens: options.maxTokens || 4096,
+        stream: true,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          const message = line.replace(/^data: /, '');
+          if (message === '[DONE]') {
+            return;
+          }
+          try {
+            const parsed = JSON.parse(message);
+            const content = parsed.choices[0].delta.content;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing Groq stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: 'groq',
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Groq stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  private async streamNvidiaRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      config.endpoint!,
+      {
+        model: config.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options.temperature || 0.7,
+        stream: true,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          const message = line.replace(/^data: /, '');
+          if (message === '[DONE]') {
+            return;
+          }
+          try {
+            const parsed = JSON.parse(message);
+            const content = parsed.choices[0].delta.content;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing Nvidia stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: 'nvidia',
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Nvidia stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  private async streamLocalRequest(config: ModelConfig, prompt: string, options: any): Promise<ModelResponse> {
+    const response = await axios.post(
+      `${config.endpoint}/generate-stream`,
+      {
+        model: config.model,
+        prompt,
+        options,
+      },
+      {
+        responseType: 'stream',
+      }
+    );
+
+    let fullResponse = '';
+    const stream = response.data;
+
+    return new Promise((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            const content = parsed.text || parsed.response;
+            if (content) {
+              fullResponse += content;
+              // Emit partial response for real-time updates
+              eventBus.emit('modelStreamChunk', { provider: config.provider, model: config.model, content });
+            }
+          } catch (error) {
+            logger.error(`Error parsing Local LLM stream message: ${error}`);
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        resolve({
+          response: fullResponse,
+          model: config.model,
+          provider: config.provider,
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        });
+      });
+
+      stream.on('error', (error: any) => {
+        logger.error(`Local LLM stream error: ${error}`);
+        reject(error);
+      });
+    });
+  }
+
+  async streamRequest(modelRef: ModelReference, prompt: string, options: any = {}): Promise<ModelResponse> {
+    const key = `${modelRef.provider}:${modelRef.model}`;
+    const providerConfig = this.modelRegistry.get(key);
+
+    if (!providerConfig) {
+      throw new Error(`Provider not found for streaming: ${key}`);
+    }
+
+    const startTime = Date.now();
+
+    // 1. Appliquer les guardrails éthiques au prompt
+    const promptEvaluation = await ethicalGuardrails.evaluatePrompt(prompt);
+    if (!promptEvaluation.passed) {
+      throw new Error(`Ethical guardrail violation: ${promptEvaluation.reason}`);
+    }
+
+    // 2. Anonymiser les PII dans le prompt
+    const anonymizedPrompt = piiAnonymizer.anonymize(prompt);
+
+    try {
+      let response: ModelResponse;
+      const processedPrompt = anonymizedPrompt; // Use the anonymized prompt
+
+      switch (modelRef.provider) {
+        case 'anthropic':
+          response = await this.streamAnthropicRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'openai':
+          response = await this.streamOpenAIRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'google':
+          response = await this.streamGoogleRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'grok':
+          response = await this.streamGrokRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'deepseek':
+          response = await this.streamDeepseekRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'groq':
+          response = await this.streamGroqRequest(providerConfig, processedPrompt, options);
+          break;
+        case 'nvidia':
+          response = await this.streamNvidiaRequest(providerConfig, processedPrompt, options);
+          break;
+        default:
+          response = await this.streamLocalRequest(providerConfig, processedPrompt, options);
+      }
+
+      const latency = Date.now() - startTime;
+      response.latency = latency;
+
+      this.updateMetrics(key, latency, true);
+
+      // 3. Appliquer les guardrails éthiques à la réponse (si la réponse est complète)
+      if (typeof response.response === 'string') {
+        const responseEvaluation = await ethicalGuardrails.evaluateResponse(response.response);
+        if (!responseEvaluation.passed) {
+          throw new Error(`Ethical guardrail violation in response: ${responseEvaluation.reason}`);
+        }
+
+        // 4. Anonymiser les PII dans la réponse avant de la retourner
+        response.response = piiAnonymizer.anonymize(response.response);
+      }
+
+      return response;
+    } catch (error: any) {
+      this.updateMetrics(key, Date.now() - startTime, false);
+      throw error;
+    }
+  }
+
   private updateMetrics(key: string, latency: number, success: boolean): void {
     const metrics = this.modelPerformance.get(key);
     if (!metrics) return;

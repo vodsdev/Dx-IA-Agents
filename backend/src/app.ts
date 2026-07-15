@@ -25,6 +25,7 @@ const app = express();
 // Initialize core services with dependency injection
 export const universalModelHub = new UniversalModelHub();
 export const modelRouter = new ModelRouter(universalModelHub);
+
 // vectorStore is already an exported singleton
 // knowledgeGraph is already an exported singleton, initialized with vectorStore
 export const contextWindow = new ContextWindow(universalModelHub, modelRouter);

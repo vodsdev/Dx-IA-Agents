@@ -1,5 +1,6 @@
-import { universalModelHub } from './universal-model-hub';
-import type { ModelReference, ModelProvider } from '../types/common.types';
+import { UniversalModelHub } from './universal-model-hub';
+import type { ModelReference, ModelProvider, ModelConfig, ModelMetrics } from '../types/common.types';
+import { logger } from '../monitoring/logger';
 
 interface RoutingRule {
   taskType: string;
@@ -9,127 +10,107 @@ interface RoutingRule {
 }
 
 export class ModelRouter {
+  private modelHub: UniversalModelHub;
+  private modelReferences: Map<string, ModelConfig> = new Map();
   private rules: Map<string, RoutingRule> = new Map();
   private routingHistory: Array<{ taskType: string; modelUsed: string; success: boolean; latency: number }> = [];
   
-  constructor() {
+  constructor(modelHub: UniversalModelHub) {
+    this.modelHub = modelHub;
     this.initializeRules();
   }
   
   private initializeRules(): void {
-    this.rules.set('code_generation', {
-      taskType: 'code_generation',
-      primaryModel: { provider: 'deepseek', model: 'deepseek-coder-v4' },
-      fallbackModel: { provider: 'anthropic', model: 'claude-3-6-sonnet-20241022' },
-      conditions: { maxLatency: 5000, minQuality: 0.8 },
-    });
-    
-    this.rules.set('creative_writing', {
-      taskType: 'creative_writing',
-      primaryModel: { provider: 'anthropic', model: 'claude-3-6-sonnet-20241022' },
-      fallbackModel: { provider: 'openai', model: 'gpt-4o' },
-      conditions: { maxLatency: 8000, minQuality: 0.9 },
-    });
-    
-    this.rules.set('fast_inference', {
-      taskType: 'fast_inference',
-      primaryModel: { provider: 'groq', model: 'llama-3.1-70b-versatile' },
-      fallbackModel: { provider: 'groq', model: 'mixtral-8x7b-32768' },
-      conditions: { maxLatency: 500, minQuality: 0.7 },
-    });
-    
-    this.rules.set('analysis', {
-      taskType: 'analysis',
-      primaryModel: { provider: 'openai', model: 'gpt-4o' },
-      fallbackModel: { provider: 'anthropic', model: 'claude-3-6-sonnet-20241022' },
-      conditions: { maxLatency: 10000, minQuality: 0.85 },
-    });
-    
-    this.rules.set('multimodal', {
-      taskType: 'multimodal',
-      primaryModel: { provider: 'google', model: 'gemini-3.1-pro' },
-      fallbackModel: { provider: 'openai', model: 'gpt-4o' },
-      conditions: { maxLatency: 8000, minQuality: 0.8 },
-    });
-    
-    this.rules.set('real_time', {
-      taskType: 'real_time',
-      primaryModel: { provider: 'grok', model: 'grok-4' },
-      fallbackModel: { provider: 'groq', model: 'llama-3.1-70b-versatile' },
-      conditions: { maxLatency: 2000, minQuality: 0.75 },
-    });
-    
-    this.rules.set('scientific', {
-      taskType: 'scientific',
-      primaryModel: { provider: 'nvidia', model: 'nemotron-4-340b' },
-      fallbackModel: { provider: 'anthropic', model: 'claude-3-6-opus-20241022' },
-      conditions: { maxLatency: 15000, minQuality: 0.9 },
-    });
+    // Initialisation des règles de routage basées sur les préférences de tâche
+    // Ces règles peuvent être dynamiquement mises à jour ou apprises
   }
   
-  async route(taskType: string, prompt: string, options: any = {}): Promise<any> {
-    const rule = this.rules.get(taskType);
-    
-    if (!rule) {
-      // Default routing
-      const defaultModel: ModelReference = { provider: 'anthropic', model: 'claude-3-6-sonnet-20241022' };
-      return this.executeWithFallback(defaultModel, defaultModel, prompt, options, taskType);
+  async routeModel(request: { task: string; prompt: string; preferences?: { cost?: 'low' | 'medium' | 'high'; latency?: 'low' | 'medium' | 'high'; quality?: 'low' | 'medium' | 'high'; stream?: boolean } }): Promise<ModelReference | undefined> {
+    const { task, prompt, preferences } = request;
+    const availableModels = Array.from(this.modelReferences.values());
+
+    if (availableModels.length === 0) {
+      logger.warn('No models registered in ModelRouter.');
+      return undefined;
     }
-    
-    return this.executeWithFallback(rule.primaryModel, rule.fallbackModel, prompt, options, taskType);
-  }
-  
-  private async executeWithFallback(
-    primary: ModelReference,
-    fallback: ModelReference,
-    prompt: string,
-    options: any,
-    taskType: string
-  ): Promise<any> {
-    const startTime = Date.now();
-    
-    try {
-      const result = await universalModelHub.request(primary, prompt, options);
-      
-      this.routingHistory.push({
-        taskType,
-        modelUsed: `${primary.provider}:${primary.model}`,
-        success: true,
-        latency: Date.now() - startTime,
-      });
-      
-      return result;
-    } catch (error) {
-      console.warn(`⚠️ Modèle primaire échoué, tentative fallback: ${fallback.provider}:${fallback.model}`);
-      
-      try {
-        const fallbackResult = await universalModelHub.request(fallback, prompt, options);
-        
-        this.routingHistory.push({
-          taskType,
-          modelUsed: `${fallback.provider}:${fallback.model}`,
-          success: true,
-          latency: Date.now() - startTime,
-        });
-        
-        return fallbackResult;
-      } catch (fallbackError) {
-        this.routingHistory.push({
-          taskType,
-          modelUsed: 'none',
-          success: false,
-          latency: Date.now() - startTime,
-        });
-        
-        throw new Error(`Tous les modèles ont échoué pour la tâche: ${taskType}`);
+
+    // Filter models by task compatibility (if defined in ModelConfig specialties)
+    let candidateModels = availableModels.filter(model => 
+      model.specialties && model.specialties.includes(task)
+    );
+
+    if (candidateModels.length === 0) {
+      logger.warn(`No specialized models found for task: ${task}. Considering all models.`);
+      candidateModels = availableModels; // Fallback to all models if no specialized ones
+    }
+
+    // Sort models based on preferences
+    candidateModels.sort((a, b) => {
+      let scoreA = 0;
+      let scoreB = 0;
+
+      const metricsA = this.modelHub.getModelPerformance(`${a.provider}:${a.model}`);
+      const metricsB = this.modelHub.getModelPerformance(`${b.provider}:${b.model}`);
+
+      // Prioritize based on cost
+      if (preferences?.cost === 'low') {
+        scoreA += (metricsA?.costPerToken || 1) * 1000; // Lower cost is better
+        scoreB += (metricsB?.costPerToken || 1) * 1000;
+      } else if (preferences?.cost === 'high') {
+        scoreA -= (metricsA?.costPerToken || 1) * 1000; // Higher cost (more powerful) is better
+        scoreB -= (metricsB?.costPerToken || 1) * 1000;
       }
+
+      // Prioritize based on latency
+      if (preferences?.latency === 'low') {
+        scoreA += (metricsA?.latency.reduce((sum, l) => sum + l, 0) / metricsA?.latency.length || 1000) / 10; // Lower latency is better
+        scoreB += (metricsB?.latency.reduce((sum, l) => sum + l, 0) / metricsB?.latency.length || 1000) / 10;
+      } else if (preferences?.latency === 'high') {
+        scoreA -= (metricsA?.latency.reduce((sum, l) => sum + l, 0) / metricsA?.latency.length || 1000) / 10; // Higher latency (more complex processing) is better
+        scoreB -= (metricsB?.latency.reduce((sum, l) => sum + l, 0) / metricsB?.latency.length || 1000) / 10;
+      }
+
+      // Prioritize based on quality (represented by successRate for now)
+      if (preferences?.quality === 'high') {
+        scoreA -= (metricsA?.successRate || 0) * 100; // Higher success rate (quality) is better
+        scoreB -= (metricsB?.successRate || 0) * 100;
+      } else if (preferences?.quality === 'low') {
+        scoreA += (metricsA?.successRate || 0) * 100; // Lower success rate (less critical) is better
+        scoreB += (metricsB?.successRate || 0) * 100;
+      }
+
+      return scoreA - scoreB;
+    });
+
+    // Return the best model
+    if (candidateModels.length > 0) {
+      const bestModel = candidateModels[0];
+      logger.info(`Routed task '${task}' to model: ${bestModel.provider}:${bestModel.model} based on preferences.`);
+      return { provider: bestModel.provider, model: bestModel.model };
     }
+
+    logger.warn(`No suitable model found for task: ${task} with given preferences. Falling back to default.`);
+    // Fallback to a default model if no suitable model is found
+    const defaultModel = this.modelHub.getModelConfig('openai:gpt-4o') || this.modelHub.getModelConfig('anthropic:claude-3-6-sonnet-20241022');
+    if (defaultModel) {
+      return { provider: defaultModel.provider, model: defaultModel.model };
+    }
+    return undefined;
   }
+
+
+  
+
   
   getRoutingHistory(): Array<any> {
     return this.routingHistory.slice(-100);
   }
   
+  setModelReference(modelConfig: ModelConfig): void {
+    const key = `${modelConfig.provider}:${modelConfig.model}`;
+    this.modelReferences.set(key, modelConfig);
+  }
+
   addRule(rule: RoutingRule): void {
     this.rules.set(rule.taskType, rule);
   }
@@ -139,4 +120,5 @@ export class ModelRouter {
   }
 }
 
-export const modelRouter = new ModelRouter();
+// modelRouter est maintenant instancié dans app.ts avec UniversalModelHub
+// export const modelRouter = new ModelRouter();

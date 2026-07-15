@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { app } from './app';
 import { config } from './config/index';
 import { agentManager } from './core/agent-manager';
-import { universalModelHub } from './core/universal-model-hub';
+import { universalModelHub, modelRouter } from './app'; // Import singletons from app.ts
 import { memoryManager } from './core/memory-manager';
 import { scheduler } from './core/scheduler';
 import { createServer } from 'http';
@@ -33,6 +33,12 @@ async function bootstrap(): Promise<void> {
   console.log('🔧 Initialisation des systèmes core...');
   
   memoryManager.initialize();
+
+  await universalModelHub.initializeProviders();
+  // Register models with ModelRouter
+  for (const [key, modelConfig] of universalModelHub.getModels()) {
+    modelRouter.setModelReference(modelConfig);
+  }
   
   await agentManager.initializeAgentPool();
   
