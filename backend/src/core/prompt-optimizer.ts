@@ -1,7 +1,17 @@
+import { UniversalModelHub } from './universal-model-hub';
+import { ModelRouter } from './model-router';
+import { logger } from '../monitoring/logger';
+
 export class PromptOptimizer {
+  private modelHub: UniversalModelHub;
+  private modelRouter: ModelRouter;
+
   private templates: Map<string, string> = new Map();
   
-  constructor() {
+  constructor(modelHub: UniversalModelHub, modelRouter: ModelRouter) {
+    this.modelHub = modelHub;
+    this.modelRouter = modelRouter;
+
     this.initializeTemplates();
   }
   
@@ -53,6 +63,41 @@ Fournis une validation détaillée avec des recommandations.
     
     return result.trim();
   }
+
+  async autoOptimizePrompt(initialPrompt: string, context?: string): Promise<string> {
+    try {
+      const optimizationPrompt = `Tu es un expert en ingénierie de prompt. Ton objectif est d'améliorer le prompt suivant pour le rendre plus clair, plus précis et plus efficace pour un modèle d'IA. Tiens compte du contexte fourni si disponible.
+
+Prompt initial: ${initialPrompt}
+${context ? `Contexte: ${context}` : ''}
+
+Consignes d'optimisation:
+- Rends le prompt plus spécifique.
+- Ajoute des contraintes claires si nécessaire.
+- Spécifie le format de sortie désiré.
+- Élimine toute ambiguïté.
+- Ne réponds qu'avec le prompt optimisé, sans aucune explication supplémentaire.
+
+Prompt optimisé:`;
+
+      const modelRef = await this.modelRouter.routeModel({
+        task: 'prompt_optimization',
+        prompt: optimizationPrompt,
+        preferences: { quality: 'high', latency: 'medium' } // Prefer a high-quality model for prompt optimization
+      });
+
+      if (!modelRef) {
+        logger.warn('No suitable model found for prompt optimization. Returning initial prompt.');
+        return initialPrompt;
+      }
+
+      const optimizedResponse = await this.modelHub.request(modelRef, optimizationPrompt, { maxTokens: 1000 });
+      return optimizedResponse.response.trim();
+    } catch (error) {
+      logger.error(`Error during prompt auto-optimization: ${error}. Returning initial prompt.`);
+      return initialPrompt;
+    }
+  }
   
   addTemplate(name: string, template: string): void {
     this.templates.set(name, template);
@@ -74,4 +119,4 @@ Réponds de manière professionnelle et précise.
   }
 }
 
-export const promptOptimizer = new PromptOptimizer();
+export const promptOptimizer = new PromptOptimizer(new UniversalModelHub(), new ModelRouter());

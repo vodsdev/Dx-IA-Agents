@@ -1,8 +1,11 @@
+import { VectorStore, vectorStore } from "./vector-store";
+
 interface GraphNode {
   id: string;
   type: string;
   label: string;
   properties: Record<string, any>;
+  embedding?: number[]; // Ajout de l'embedding pour le RAG Hybride
 }
 
 interface GraphEdge {
@@ -15,11 +18,19 @@ interface GraphEdge {
 }
 
 export class KnowledgeGraph {
+  private vectorStore: VectorStore;
+
+  constructor(vectorStoreInstance: VectorStore) {
+    this.vectorStore = vectorStoreInstance;
+  }
   private nodes: Map<string, GraphNode> = new Map();
   private edges: Map<string, GraphEdge> = new Map();
   
-  addNode(node: GraphNode): void {
+  async addNode(node: GraphNode): Promise<void> {
     this.nodes.set(node.id, node);
+    if (node.embedding) {
+      await this.vectorStore.addVector(node.id, node.embedding, { type: node.type, label: node.label, properties: node.properties });
+    }
   }
   
   addEdge(edge: GraphEdge): void {
@@ -69,11 +80,23 @@ export class KnowledgeGraph {
     return null;
   }
   
-  query(query: { nodeType?: string; edgeType?: string; properties?: Record<string, any> }): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  async query(query: { nodeType?: string; edgeType?: string; properties?: Record<string, any>; semanticQuery?: string; k?: number }): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+    let semanticResults: { id: string; score: number }[] = [];
+    if (query.semanticQuery) {
+      semanticResults = await this.vectorStore.query(query.semanticQuery, query.k || 10);
+    }
+
     const matchingNodes: GraphNode[] = [];
     const matchingEdges: GraphEdge[] = [];
-    
+
+    const candidateNodeIds = new Set<string>(semanticResults.map(res => res.id));
+
     for (const node of this.nodes.values()) {
+      // Si une requête sémantique est présente, on ne considère que les nœuds pertinents
+      if (query.semanticQuery && !candidateNodeIds.has(node.id)) {
+        continue;
+      }
+
       if (query.nodeType && node.type !== query.nodeType) continue;
       if (query.properties) {
         const matches = Object.entries(query.properties).every(([key, value]) => 
@@ -100,4 +123,4 @@ export class KnowledgeGraph {
   }
 }
 
-export const knowledgeGraph = new KnowledgeGraph();
+export const knowledgeGraph = new KnowledgeGraph(vectorStore);

@@ -13,8 +13,27 @@ import { metricsRoutes } from './api/routes/metrics.routes';
 import { webhookRoutes } from './api/routes/webhooks.routes';
 import { adminRoutes } from './api/routes/admin.routes';
 import { healthChecker } from './core/health-checker';
+import { UniversalModelHub } from './core/universal-model-hub';
+import { ModelRouter } from './core/model-router';
+import { vectorStore } from './core/vector-store';
+import { knowledgeGraph } from './core/knowledge-graph';
+import { ContextWindow } from './core/context-window';
+import { PromptOptimizer } from './core/prompt-optimizer';
 
 const app = express();
+
+// Initialize core services with dependency injection
+export const universalModelHub = new UniversalModelHub();
+export const modelRouter = new ModelRouter(universalModelHub);
+// vectorStore is already an exported singleton
+// knowledgeGraph is already an exported singleton, initialized with vectorStore
+export const contextWindow = new ContextWindow(universalModelHub, modelRouter);
+export const promptOptimizer = new PromptOptimizer(universalModelHub, modelRouter);
+
+// Set model references for ModelRouter after UniversalModelHub is initialized
+universalModelHub.getModels().forEach(model => modelRouter.setModelReference(model));
+
+
 
 // Security
 app.use(helmet());
